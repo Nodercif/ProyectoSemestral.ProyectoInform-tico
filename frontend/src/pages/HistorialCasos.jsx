@@ -1,0 +1,504 @@
+import { useState } from 'react'
+import { getCasos, actualizarEstadoCaso, eliminarCaso, registrarAccion } from '../services/api'
+
+// ─── Constantes ───────────────────────────────────────────────────────────────
+const ESTADOS = ['ABIERTO', 'EN_SEGUIMIENTO', 'RESUELTO', 'CERRADO', 'DERIVADO']
+const TIPOS_ACCION = ['CITACION', 'DERIVACION_ORIENTACION', 'ENTREVISTA', 'DERIVACION_PSICOLOGO']
+
+const labelEstado = {
+  ABIERTO:             'Abierto',
+  EN_SEGUIMIENTO:      'En seguimiento',
+  RESUELTO:            'Resuelto',
+  CERRADO:             'Cerrado',
+  DERIVADO:            'Derivado',
+}
+const labelAccion = {
+  CITACION:               'Citación',
+  DERIVACION_ORIENTACION: 'Derivación a orientación',
+  ENTREVISTA:             'Entrevista',
+  DERIVACION_PSICOLOGO:   'Derivación a psicólogo',
+}
+const labelTipo = {
+  CONFLICTO:       'Conflicto',
+  AGRESION_FISICA: 'Agresión Física',
+  AGRESION_VERBAL: 'Agresión Verbal',
+  ACOSO:           'Acoso',
+  DANO_MATERIAL:   'Daño Material',
+}
+const labelGravedad = {
+  LEVE:      'Leve',
+  MODERADO:  'Moderado',
+  GRAVE:     'Grave',
+  MUY_GRAVE: 'Muy Grave',
+}
+
+// ─── Estilos por estado ───────────────────────────────────────────────────────
+const styleEstado = {
+  ABIERTO:        { bg: 'rgba(52,211,153,0.12)', color: '#065f46', border: '#2d7a4f' },
+  EN_SEGUIMIENTO: { bg: 'rgba(251,191,36,0.15)', color: '#92400e', border: '#b45309' },
+  RESUELTO:       { bg: 'rgba(79,142,247,0.12)', color: '#1e3a8a', border: '#3b82f6' },
+  CERRADO:        { bg: 'rgba(107,31,42,0.10)',  color: '#6b1f2a', border: '#6b1f2a' },
+  DERIVADO:       { bg: 'rgba(139,92,246,0.12)', color: '#4c1d95', border: '#7c3aed' },
+}
+
+function BadgeEstado({ estado }) {
+  const s = styleEstado[estado] || styleEstado.ABIERTO
+  return (
+    <span style={{
+      background: s.bg, color: s.color,
+      border: `1px solid ${s.border}`,
+      borderRadius: 20, padding: '3px 12px',
+      fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+    }}>
+      {labelEstado[estado]}
+    </span>
+  )
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
+export default function HistorialCasos() {
+  const [filtros, setFiltros] = useState({ estado: '', texto: '', desde: '', hasta: '' })
+  const [resultados, setResultados] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [expandido, setExpandido] = useState(null)
+  const [editandoEstado, setEditandoEstado] = useState(null)
+  const [nuevoEstado, setNuevoEstado] = useState('')
+  const [cambiandoEstado, setCambiandoEstado] = useState(false)
+  const [confirmandoEliminar, setConfirmandoEliminar] = useState(null) // id del caso a confirmar
+  const [eliminando, setEliminando] = useState(false)
+  const [agregandoAccionA, setAgregandoAccionA] = useState(null) // id del caso con el form abierto
+  const [nuevaAccion, setNuevaAccion] = useState({ tipo: '', descripcion: '', fecha: '' })
+  const [guardandoAccion, setGuardandoAccion] = useState(false)
+
+  const handleFiltroChange = e => setFiltros({ ...filtros, [e.target.name]: e.target.value })
+
+  const handleBuscar = async (e) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    setExpandido(null)
+    try {
+      const params = Object.fromEntries(Object.entries(filtros).filter(([, v]) => v !== ''))
+      const res = await getCasos(params)
+      setResultados(res.data.data || [])
+    } catch (err) {
+      setError(err.response?.data?.error || 'Error al buscar los casos')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCambiarEstado = async (casoId) => {
+    if (!nuevoEstado) return
+    setCambiandoEstado(true)
+    setError('')
+    try {
+      const res = await actualizarEstadoCaso(casoId, nuevoEstado)
+      setResultados(resultados.map(c => (c.id === casoId ? res.data.data : c)))
+      setEditandoEstado(null)
+      setNuevoEstado('')
+    } catch (err) {
+      setError(err.response?.data?.errores?.[0] || err.response?.data?.error || 'Error al actualizar el estado')
+    } finally {
+      setCambiandoEstado(false)
+    }
+  }
+
+  const toggleExpandido = (id) => setExpandido(expandido === id ? null : id)
+
+  const handleEliminarCaso = async (casoId) => {
+    setEliminando(true)
+    setError('')
+    try {
+      await eliminarCaso(casoId)
+      setResultados(resultados.filter(c => c.id !== casoId))
+      setConfirmandoEliminar(null)
+      if (expandido === casoId) setExpandido(null)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Error al eliminar el caso')
+    } finally {
+      setEliminando(false)
+    }
+  }
+
+  const handleAgregarAccion = async (e, casoId) => {
+    e.preventDefault()
+    setGuardandoAccion(true)
+    setError('')
+    try {
+      const res = await registrarAccion(casoId, {
+        tipo: nuevaAccion.tipo,
+        descripcion: nuevaAccion.descripcion || undefined,
+        fecha: nuevaAccion.fecha ? new Date(nuevaAccion.fecha).toISOString() : undefined,
+      })
+      setResultados(resultados.map(c => (c.id === casoId ? res.data.data : c)))
+      setNuevaAccion({ tipo: '', descripcion: '', fecha: '' })
+      setAgregandoAccionA(null)
+    } catch (err) {
+      setError(err.response?.data?.errores?.[0] || err.response?.data?.error || 'Error al registrar la acción')
+    } finally {
+      setGuardandoAccion(false)
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 760, margin: '0 auto' }}>
+      <h2 style={{ fontFamily: 'var(--font-head)', fontSize: 26, marginBottom: 6 }}>
+        Ver Casos
+      </h2>
+      <p style={{ color: 'var(--muted)', marginBottom: 28, fontSize: 14 }}>
+        Consulte y filtre los casos registrados en el sistema. Puede ver sus incidentes, acciones y actualizar el estado.
+      </p>
+
+      {/* ── Formulario de filtros ─────────────────────────────────────────── */}
+      <div className="card" style={{ marginBottom: 24 }}>
+        <form onSubmit={handleBuscar} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          <div className="form-group">
+            <label>Buscar por título o descripción</label>
+            <input
+              type="text" name="texto"
+              placeholder="Ej: acoso, 3°B..."
+              value={filtros.texto} onChange={handleFiltroChange}
+            />
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+            <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Filtros opcionales</p>
+            <div className="form-row" style={{ marginBottom: 12 }}>
+              <div className="form-group">
+                <label>Estado del caso</label>
+                <select name="estado" value={filtros.estado} onChange={handleFiltroChange}>
+                  <option value="">Todos</option>
+                  {ESTADOS.map(e => <option key={e} value={e}>{labelEstado[e]}</option>)}
+                </select>
+              </div>
+              <div className="form-group" />
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Creado desde</label>
+                <input type="date" name="desde" value={filtros.desde} onChange={handleFiltroChange} />
+              </div>
+              <div className="form-group">
+                <label>Creado hasta</label>
+                <input type="date" name="hasta" value={filtros.hasta} onChange={handleFiltroChange} />
+              </div>
+            </div>
+          </div>
+
+          {error && <p className="error-msg">{error}</p>}
+
+          <button className="btn-primary" type="submit" disabled={loading}>
+            {loading ? 'Buscando...' : '⌕ Buscar casos'}
+          </button>
+        </form>
+      </div>
+
+      {/* ── Resultados ───────────────────────────────────────────────────── */}
+      {resultados !== null && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+          <p style={{ fontSize: 13, color: 'var(--muted)' }}>
+            {resultados.length === 0
+              ? 'No se encontraron casos con los filtros aplicados.'
+              : `${resultados.length} caso(s) encontrado(s)`
+            }
+          </p>
+
+          {resultados.map(caso => {
+            // El backend devuelve casoIncidentes: [{ incidente: {...} }], lo desenvolvemos aquí
+            const incidentes = (caso.casoIncidentes || []).map(ci => ci.incidente)
+            const acciones = caso.acciones || []
+
+            return (
+              <div key={caso.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+
+                {/* Cabecera del caso */}
+                <div
+                  onClick={() => toggleExpandido(caso.id)}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+                    gap: 12, padding: '18px 22px', cursor: 'pointer',
+                    borderBottom: expandido === caso.id ? '1px solid var(--border)' : 'none',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>#{caso.id}</span>
+                      <BadgeEstado estado={caso.estado} />
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                        {new Date(caso.createdAt).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 4, lineHeight: 1.4 }}>
+                      {caso.titulo}
+                    </p>
+                    {caso.descripcion && (
+                      <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.5 }}>
+                        {caso.descripcion}
+                      </p>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                        🗂 {incidentes.length} incidente(s)
+                      </span>
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                        📋 {acciones.length} acción(es)
+                      </span>
+                    </div>
+                  </div>
+
+                  <span style={{ fontSize: 18, color: 'var(--muted)', flexShrink: 0, marginTop: 4 }}>
+                    {expandido === caso.id ? '▲' : '▼'}
+                  </span>
+                </div>
+
+                {/* Detalle expandido */}
+                {expandido === caso.id && (
+                  <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+                    {/* Incidentes asociados */}
+                    <div>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Incidentes asociados
+                      </p>
+                      {incidentes.length === 0 ? (
+                        <p style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>
+                          Sin incidentes asociados.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {incidentes.map(inc => (
+                            <div key={inc.id} style={{
+                              display: 'flex', alignItems: 'flex-start', gap: 12,
+                              padding: '10px 14px', background: 'var(--surface2)',
+                              borderRadius: 8, border: '1px solid var(--border)',
+                            }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)' }}>#{inc.id}</span>
+                                  <span className={`badge badge-${inc.gravedad.toLowerCase()}`}>
+                                    {labelGravedad[inc.gravedad]}
+                                  </span>
+                                  <span style={{
+                                    background: 'var(--surface)', color: 'var(--muted)',
+                                    padding: '3px 10px', borderRadius: 20, fontSize: 12,
+                                    border: '1px solid var(--border)',
+                                  }}>
+                                    {labelTipo[inc.tipo]}
+                                  </span>
+                                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                    {new Date(inc.fecha).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                  </span>
+                                </div>
+                                <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>
+                                  {inc.descripcion}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Acciones de intervención */}
+                    <div>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Acciones de intervención
+                      </p>
+                      {acciones.length === 0 ? (
+                        <p style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic', marginBottom: 12 }}>
+                          Sin acciones registradas aún.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                          {acciones.map((ac) => (
+                            <div key={ac.id} style={{
+                              display: 'flex', gap: 12, alignItems: 'flex-start',
+                              padding: '10px 14px', background: 'rgba(107,31,42,0.04)',
+                              borderRadius: 8, border: '1px solid rgba(107,31,42,0.1)',
+                            }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                  <span style={{
+                                    background: 'rgba(107,31,42,0.08)', color: 'var(--accent)',
+                                    border: '1px solid rgba(107,31,42,0.2)',
+                                    borderRadius: 20, padding: '2px 10px', fontSize: 12, fontWeight: 600,
+                                  }}>
+                                    {labelAccion[ac.tipo]}
+                                  </span>
+                                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                    {new Date(ac.fecha).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                  </span>
+                                </div>
+                                {ac.descripcion && (
+                                  <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>
+                                    {ac.descripcion}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Agregar nueva acción */}
+                      {agregandoAccionA === caso.id ? (
+                        <form
+                          onSubmit={e => handleAgregarAccion(e, caso.id)}
+                          style={{
+                            display: 'flex', flexDirection: 'column', gap: 10,
+                            padding: '14px', background: 'var(--surface2)', borderRadius: 8,
+                            border: '1px solid var(--border)',
+                          }}
+                        >
+                          <div className="form-row">
+                            <div className="form-group">
+                              <label>Tipo de acción *</label>
+                              <select
+                                required value={nuevaAccion.tipo}
+                                onChange={e => setNuevaAccion({ ...nuevaAccion, tipo: e.target.value })}
+                              >
+                                <option value="">Seleccionar...</option>
+                                {TIPOS_ACCION.map(t => <option key={t} value={t}>{labelAccion[t]}</option>)}
+                              </select>
+                            </div>
+                            <div className="form-group">
+                              <label>Fecha</label>
+                              <input
+                                type="date" value={nuevaAccion.fecha}
+                                onChange={e => setNuevaAccion({ ...nuevaAccion, fecha: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                          <div className="form-group">
+                            <label>Descripción</label>
+                            <textarea
+                              rows={2}
+                              placeholder="Ej: Se citó al apoderado para el día lunes..."
+                              value={nuevaAccion.descripcion}
+                              onChange={e => setNuevaAccion({ ...nuevaAccion, descripcion: e.target.value })}
+                              style={{ resize: 'vertical' }}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => { setAgregandoAccionA(null); setNuevaAccion({ tipo: '', descripcion: '', fecha: '' }) }}
+                              style={{ fontSize: 13, padding: '8px 16px' }}
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              className="btn-primary"
+                              type="submit"
+                              disabled={guardandoAccion}
+                              style={{ fontSize: 13, padding: '8px 16px' }}
+                            >
+                              {guardandoAccion ? 'Guardando...' : 'Guardar acción'}
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <button
+                          className="btn-secondary"
+                          onClick={() => { setAgregandoAccionA(caso.id); setNuevaAccion({ tipo: '', descripcion: '', fecha: '' }) }}
+                          style={{ fontSize: 13, padding: '8px 16px' }}
+                        >
+                          + Agregar acción
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Actualizar estado y eliminar */}
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                      paddingTop: 16, borderTop: '1px solid var(--border)', flexWrap: 'wrap',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        {editandoEstado === caso.id ? (
+                          <>
+                            <select
+                              value={nuevoEstado}
+                              onChange={e => setNuevoEstado(e.target.value)}
+                              style={{ maxWidth: 200, padding: '8px 12px', fontSize: 13 }}
+                            >
+                              <option value="">Seleccionar estado...</option>
+                              {ESTADOS.filter(e => e !== caso.estado).map(e => (
+                                <option key={e} value={e}>{labelEstado[e]}</option>
+                              ))}
+                            </select>
+                            <button
+                              className="btn-primary"
+                              onClick={() => handleCambiarEstado(caso.id)}
+                              disabled={!nuevoEstado || cambiandoEstado}
+                              style={{ fontSize: 13, padding: '8px 16px' }}
+                            >
+                              {cambiandoEstado ? 'Guardando...' : 'Confirmar'}
+                            </button>
+                            <button
+                              className="btn-secondary"
+                              onClick={() => { setEditandoEstado(null); setNuevoEstado('') }}
+                              style={{ fontSize: 13, padding: '8px 16px' }}
+                            >
+                              Cancelar
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="btn-secondary"
+                            onClick={() => { setEditandoEstado(caso.id); setNuevoEstado('') }}
+                            style={{ fontSize: 13, padding: '8px 16px' }}
+                          >
+                            Cambiar estado
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Eliminar caso */}
+                      {confirmandoEliminar === caso.id ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 12, color: 'var(--danger)' }}>¿Eliminar permanentemente?</span>
+                          <button
+                            className="btn-danger"
+                            onClick={() => handleEliminarCaso(caso.id)}
+                            disabled={eliminando}
+                            style={{ fontSize: 13, padding: '8px 16px' }}
+                          >
+                            {eliminando ? 'Eliminando...' : 'Sí, eliminar'}
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            onClick={() => setConfirmandoEliminar(null)}
+                            style={{ fontSize: 13, padding: '8px 16px' }}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmandoEliminar(caso.id)}
+                          style={{
+                            background: 'transparent', color: 'var(--danger)',
+                            border: '1px solid var(--danger)', borderRadius: 8,
+                            fontSize: 13, padding: '8px 16px',
+                          }}
+                        >
+                          Eliminar caso
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
